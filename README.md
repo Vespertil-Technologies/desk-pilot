@@ -8,7 +8,7 @@ AI agent for controlling a browser and basic desktop interactions using LLMs (Ge
 Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 playwright install
 ```
 
