@@ -1,100 +1,137 @@
 """
 agent.py — the AI brain.
 
-Sends HTML or a grid-annotated screenshot to Claude and parses back a structured
-action.  The agent loop runs until the AI returns {"action": "done"} or hits the
-step limit.
+Each turn the agent shows the model one representation of the page
+(HTML or a grid-annotated screenshot) and the model returns a single
+structured action. The agent loop runs until the model returns
+{"action": "done"} or hits the step limit.
 
-Action schema (JSON, returned by the model):
-{
-  "mode":      "html" | "screenshot",     // which mode was used this turn
-  "action":    "click" | "double_click" | "right_click"
-               | "type" | "scroll" | "navigate"
-               | "request_screenshot"     // switch to screenshot mode next turn
-               | "request_html"           // switch to html mode next turn
-               | "done",
-  "selector":  "<css selector>",          // used when mode=html
-  "cell":      "C4",                      // used when mode=screenshot
-  "text":      "...",                     // for type / navigate actions
-  "scroll_dir": "up" | "down",           // for scroll action
-  "reasoning": "why I chose this"        // always present
-}
+Action schema (returned by the model, enforced via provider-side
+structured output where supported):
+    mode        "html" | "screenshot"
+    action      "click" | "double_click" | "right_click"
+                | "type" | "scroll" | "navigate"
+                | "request_screenshot" | "request_html" | "done"
+    selector    CSS selector (html mode)
+    cell        grid cell name like "C4" (screenshot mode)
+    text        text to type / URL to navigate
+    scroll_dir  "up" | "down"
+    reasoning   short explanation
+Fields that don't apply to the chosen action are returned as empty strings.
 """
 
 from __future__ import annotations
 
 import base64
+import json
 
 from google import genai
 from google.genai import types
 
 from computer import BrowserSession, GridCell, click_cell, screenshot_grid, scroll, type_text
 
+ACTION_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "mode": {
+            "type": "string",
+            "enum": ["html", "screenshot"],
+        },
+        "action": {
+            "type": "string",
+            "enum": [
+                "click",
+                "double_click",
+                "right_click",
+                "type",
+                "scroll",
+                "navigate",
+                "request_screenshot",
+                "request_html",
+                "done",
+            ],
+        },
+        "selector": {"type": "string"},
+        "cell": {"type": "string"},
+        "text": {"type": "string"},
+        "scroll_dir": {"type": "string", "enum": ["up", "down", ""]},
+        "reasoning": {"type": "string"},
+    },
+    "required": [
+        "mode",
+        "action",
+        "selector",
+        "cell",
+        "text",
+        "scroll_dir",
+        "reasoning",
+    ],
+    "additionalProperties": False,
+}
+
 SYSTEM_PROMPT = """You are a computer-use agent that controls a real browser and desktop.
 
-On each turn you receive EITHER:
+Each turn you receive ONE of:
   A) The page HTML (stripped of scripts/styles), labelled [HTML MODE]
   B) A screenshot with a lettered+numbered grid overlay (A1..T15), labelled [SCREENSHOT MODE]
 
-You must reply with a SINGLE JSON object — no markdown fences, nothing else — using this schema:
+Reply with a single action. For fields that do not apply to your chosen
+action, return an empty string.
 
-{
-  "mode":      "html" | "screenshot",
-  "action":    one of:
-                 "click"              → click an element or grid cell
-                 "double_click"       → double-click
-                 "right_click"        → right-click
-                 "type"               → type text (selector or cell required first)
-                 "scroll"             → scroll at a cell location
-                 "navigate"           → go to a URL (text = URL)
-                 "request_screenshot" → you need to see the screen visually
-                 "request_html"       → you want the lighter HTML representation
-                 "done"               → goal achieved, stop
-  "selector":  "CSS selector"         (only in html mode)
-  "cell":      "B3"                   (only in screenshot mode)
-  "text":      "string"               (for type / navigate)
-  "scroll_dir": "up" | "down"        (for scroll)
-  "reasoning": "brief explanation"
-}
+Action semantics:
+- click / double_click / right_click:
+    in HTML mode set "selector"; in screenshot mode set "cell".
+- type:
+    in HTML mode set "selector" and "text"; in screenshot mode set "text" only.
+- scroll:
+    set "scroll_dir" ("up" or "down"); in screenshot mode "cell" picks the spot.
+- navigate:
+    set "text" to the URL.
+- request_screenshot / request_html:
+    switch input mode for the next turn.
+- done:
+    the full goal is achieved, stop.
 
 Guidelines:
 - Prefer html mode: it is cheaper and more precise.
 - Switch to screenshot mode if the page uses canvas, custom widgets,
   or you can not find the element by selector.
-- Always prefer the most specific CSS selector (id > aria-label > data-* attributes > class).
-- If the action succeeded but there is more to do, continue with the next action.
-- Set action=done only when the full goal is achieved.
+- Always prefer the most specific CSS selector
+  (id > aria-label > data-* attributes > class).
+- Only return done when the full goal is achieved.
+
+The user message will tell you whether your previous action changed the
+page. If it did not, rethink — do not repeat the same action.
 """
 
 
 def _extract_json(raw: str) -> dict:
-    import json
+    """Pull the first {...} JSON object out of a possibly-noisy response."""
     import re
 
     raw = raw.strip()
-
-    # Remove markdown fences
     raw = re.sub(r"^```(?:json)?", "", raw)
     raw = re.sub(r"```$", "", raw).strip()
 
-    # Extract JSON block
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if not match:
         raise ValueError(f"No JSON found in response: {raw[:200]}")
-
     return json.loads(match.group(0))
 
 
-def _build_html_message(html: str, goal: str, history_summary: str) -> list[dict]:
+def _build_html_message(html: str, goal: str, history_summary: str, last_result: str) -> list[dict]:
     content = (
         f"GOAL: {goal}\n\n"
         f"PROGRESS SO FAR: {history_summary}\n\n"
+        f"LAST ACTION RESULT: {last_result}\n\n"
         f"[HTML MODE]\n{html}"
     )
     return [{"role": "user", "content": content}]
 
 
-def _build_screenshot_message(b64: str, goal: str, history_summary: str) -> list[dict]:
+def _build_screenshot_message(
+    b64: str, goal: str, history_summary: str, last_result: str
+) -> list[dict]:
     return [
         {
             "role": "user",
@@ -104,6 +141,7 @@ def _build_screenshot_message(b64: str, goal: str, history_summary: str) -> list
                     "text": (
                         f"GOAL: {goal}\n\n"
                         f"PROGRESS SO FAR: {history_summary}\n\n"
+                        f"LAST ACTION RESULT: {last_result}\n\n"
                         "[SCREENSHOT MODE] The image below has a red grid overlay. "
                         "Columns are labelled A-T (left→right), rows 1-15 (top→bottom). "
                         "Identify the best cell and action to take."
@@ -117,25 +155,71 @@ def _build_screenshot_message(b64: str, goal: str, history_summary: str) -> list
         }
     ]
 
+
+def _to_openai_messages(messages: list[dict]) -> list[dict]:
+    """Convert the internal Anthropic-shaped message list into OpenAI's format."""
+    out: list[dict] = []
+    for m in messages:
+        content = m["content"]
+        if isinstance(content, str):
+            out.append({"role": m["role"], "content": content})
+            continue
+
+        new_content = []
+        for block in content:
+            if block.get("type") == "text":
+                new_content.append({"type": "text", "text": block["text"]})
+            elif block.get("type") == "image":
+                src = block["source"]
+                data_url = f"data:{src['media_type']};base64,{src['data']}"
+                new_content.append({"type": "image_url", "image_url": {"url": data_url}})
+        out.append({"role": m["role"], "content": new_content})
+    return out
+
+
 class BaseModel:
-    def generate(self, messages: list[dict], system: str) -> str:
+    def generate(self, messages: list[dict], system: str) -> dict:
         raise NotImplementedError
 
 
 class ClaudeModel(BaseModel):
     def __init__(self, api_key: str, model: str = "claude-opus-4-7"):
         import anthropic
+
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model = model
 
     def generate(self, messages, system):
-        resp = self.client.messages.create(
-            model=self.model,
-            max_tokens=512,
-            system=system,
-            messages=messages,
-        )
-        return resp.content[0].text
+        try:
+            resp = self.client.messages.create(
+                model=self.model,
+                max_tokens=1024,
+                system=system,
+                tools=[
+                    {
+                        "name": "perform_action",
+                        "description": "Perform one action and explain why.",
+                        "input_schema": ACTION_SCHEMA,
+                    }
+                ],
+                tool_choice={"type": "tool", "name": "perform_action"},
+                messages=messages,
+            )
+            for block in resp.content:
+                if block.type == "tool_use":
+                    return dict(block.input)
+            raise RuntimeError("Claude returned no tool_use block.")
+        except Exception as structured_err:
+            try:
+                resp = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=1024,
+                    system=system,
+                    messages=messages,
+                )
+                return _extract_json(resp.content[0].text)
+            except Exception:
+                raise structured_err from None
 
 
 class GeminiModel(BaseModel):
@@ -143,47 +227,75 @@ class GeminiModel(BaseModel):
         self.client = genai.Client(api_key=api_key)
         self.model = model
 
-    def generate(self, messages, system):
+    def _contents(self, messages, system):
         content = messages[0]["content"]
-
-        # ── Screenshot mode (multimodal) ───────────────────────────
         if isinstance(content, list):
             text_part = content[0]["text"]
             image_part = content[1]["source"]["data"]
+            return [
+                system + "\n\n" + text_part,
+                types.Part.from_bytes(
+                    data=base64.b64decode(image_part),
+                    mime_type="image/png",
+                ),
+            ]
+        return system + "\n\n" + content
 
+    def generate(self, messages, system):
+        contents = self._contents(messages, system)
+        try:
             response = self.client.models.generate_content(
                 model=self.model,
-                contents=[
-                    system + "\n\n" + text_part,
-                    types.Part.from_bytes(
-                        data=base64.b64decode(image_part),
-                        mime_type="image/png"
-                    )
-                ]
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=ACTION_SCHEMA,
+                ),
             )
-
-        # ── HTML mode (text only) ──────────────────────────────────
-        else:
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=system + "\n\n" + content
-            )
-
-        return response.text
+            return json.loads(response.text)
+        except Exception as structured_err:
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model,
+                    contents=contents,
+                )
+                return _extract_json(response.text)
+            except Exception:
+                raise structured_err from None
 
 
 class OpenAIModel(BaseModel):
     def __init__(self, api_key: str, model: str = "gpt-4o"):
         from openai import OpenAI
+
         self.client = OpenAI(api_key=api_key)
         self.model = model
 
     def generate(self, messages, system):
-        resp = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "system", "content": system}] + messages,
-        )
-        return resp.choices[0].message.content
+        oai_messages = [{"role": "system", "content": system}] + _to_openai_messages(messages)
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=oai_messages,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "action",
+                        "schema": ACTION_SCHEMA,
+                        "strict": True,
+                    },
+                },
+            )
+            return json.loads(resp.choices[0].message.content)
+        except Exception as structured_err:
+            try:
+                resp = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=oai_messages,
+                )
+                return _extract_json(resp.choices[0].message.content)
+            except Exception:
+                raise structured_err from None
 
 
 def create_model(provider: str, api_key: str) -> BaseModel:
@@ -195,6 +307,8 @@ def create_model(provider: str, api_key: str) -> BaseModel:
         return OpenAIModel(api_key)
     else:
         raise ValueError(provider)
+
+
 class Agent:
     def __init__(
         self,
@@ -210,19 +324,20 @@ class Agent:
         self._history: list[str] = []
         self._cells: dict[str, GridCell] = {}
 
-    # ── Internal helpers ──────────────────────────────────────────────────────
-
     def _history_summary(self) -> str:
         if not self._history:
             return "No actions taken yet."
-        return " → ".join(self._history[-6:])   # last 6 steps
+        return " → ".join(self._history[-6:])
+
+    def _html_signal(self) -> str:
+        return self.browser.page.evaluate(
+            "() => document.URL + '|' + (document.body ? document.body.textContent.length : 0)"
+        )
 
     def _ask(self, messages: list[dict]) -> dict:
-        raw = self.model.generate(messages, SYSTEM_PROMPT)
-        return _extract_json(raw)
+        return self.model.generate(messages, SYSTEM_PROMPT)
 
     def _execute(self, action: dict) -> str:
-        """Execute one action dict. Returns a short description for the history log."""
         act = action["action"]
         mode = action.get("mode", "html")
 
@@ -231,33 +346,29 @@ class Agent:
                 sel = action["selector"]
                 self.browser.click_selector(sel)
                 return f"click({sel})"
-            else:
-                cell = action["cell"]
-                click_cell(cell, self._cells, "click")
-                return f"click(cell={cell})"
+            cell = action["cell"]
+            click_cell(cell, self._cells, "click")
+            return f"click(cell={cell})"
 
-        elif act == "double_click":
+        if act == "double_click":
             if mode == "html":
                 sel = action["selector"]
                 self.browser.double_click_selector(sel)
                 return f"dblclick({sel})"
-            else:
-                cell = action["cell"]
-                click_cell(cell, self._cells, "double_click")
-                return f"dblclick(cell={cell})"
+            cell = action["cell"]
+            click_cell(cell, self._cells, "double_click")
+            return f"dblclick(cell={cell})"
 
-        elif act == "right_click":
+        if act == "right_click":
             if mode == "html":
-                # Playwright doesn't have a simple rightClick helper, use JS
                 sel = action["selector"]
-                self.browser.page.click(sel, button="right")
+                self.browser.right_click_selector(sel)
                 return f"rightclick({sel})"
-            else:
-                cell = action["cell"]
-                click_cell(cell, self._cells, "right_click")
-                return f"rightclick(cell={cell})"
+            cell = action["cell"]
+            click_cell(cell, self._cells, "right_click")
+            return f"rightclick(cell={cell})"
 
-        elif act == "type":
+        if act == "type":
             text = action.get("text", "")
             if mode == "html" and action.get("selector"):
                 self.browser.type_into(action["selector"], text)
@@ -265,77 +376,92 @@ class Agent:
                 type_text(text)
             return f"type({text!r})"
 
-        elif act == "navigate":
+        if act == "navigate":
             url = action.get("text", "")
             self.browser.navigate(url)
             return f"navigate({url})"
 
-        elif act == "scroll":
-            direction = action.get("scroll_dir", "down")
+        if act == "scroll":
+            direction = action.get("scroll_dir") or "down"
             clicks = -3 if direction == "down" else 3
             if mode == "screenshot" and action.get("cell"):
                 c = self._cells.get(action["cell"].upper())
                 if c:
                     scroll(c.x, c.y, clicks)
             else:
-                scroll(0, 0, clicks)   # scroll wherever mouse is
+                scroll(0, 0, clicks)
             return f"scroll({direction})"
 
-        elif act in ("request_screenshot", "request_html", "done"):
+        if act in ("request_screenshot", "request_html", "done"):
             return f"[{act}]"
 
-        else:
-            return f"[unknown action: {act}]"
-
-    # ── Main loop ─────────────────────────────────────────────────────────────
+        return f"[unknown action: {act}]"
 
     def run(self, start_mode: str = "html") -> None:
-        """
-        Run the agent loop until done or max_steps reached.
-        start_mode: "html" | "screenshot"
-        """
         current_mode = start_mode
-        print(f"\n🤖 Agent starting. Goal: {self.goal}\n{'─'*60}")
+        last_result = "first turn — no prior action"
+        prev_html_signal: str | None = None
+
+        print(f"\n🤖 Agent starting. Goal: {self.goal}\n{'─' * 60}")
 
         for step in range(1, self.max_steps + 1):
             print(f"\nStep {step}/{self.max_steps} — mode: {current_mode}")
 
-            # ── Build the prompt ──────────────────────────────────────────────
             if current_mode == "html":
                 html = self.browser.get_html()
-                messages = _build_html_message(html, self.goal, self._history_summary())
+                signal = self._html_signal()
+                if prev_html_signal is not None:
+                    last_result = (
+                        "page changed since the last action."
+                        if signal != prev_html_signal
+                        else "page did NOT change after the last action — rethink."
+                    )
+                prev_html_signal = signal
+                messages = _build_html_message(
+                    html, self.goal, self._history_summary(), last_result
+                )
             else:
                 b64, self._cells = screenshot_grid()
-                messages = _build_screenshot_message(b64, self.goal, self._history_summary())
+                prev_html_signal = None
+                messages = _build_screenshot_message(
+                    b64, self.goal, self._history_summary(), last_result
+                )
 
-            # ── Ask Claude ────────────────────────────────────────────────────
-            action = self._ask(messages)
+            try:
+                action = self._ask(messages)
+            except Exception as e:
+                print(f"  ✗ Model error: {e}")
+                self._history.append(f"[model-error: {e}]")
+                last_result = f"the model call failed: {e}"
+                continue
+
             print(f"  ↳ action={action.get('action')!r}  reason={action.get('reasoning')!r}")
 
-            # ── Handle mode switches ──────────────────────────────────────────
-            if action["action"] == "request_screenshot":
+            act = action["action"]
+
+            if act == "request_screenshot":
                 current_mode = "screenshot"
                 self._history.append("[switched→screenshot]")
+                last_result = "switched to screenshot mode"
                 continue
-
-            if action["action"] == "request_html":
+            if act == "request_html":
                 current_mode = "html"
                 self._history.append("[switched→html]")
+                last_result = "switched to html mode"
                 continue
-
-            if action["action"] == "done":
+            if act == "done":
                 print(f"\n✅ Done after {step} steps.")
                 return
 
-            # ── Execute ───────────────────────────────────────────────────────
             try:
                 desc = self._execute(action)
                 self._history.append(desc)
                 print(f"  ✓ {desc}")
+                last_result = f"executed {desc}"
             except Exception as e:
                 print(f"  ✗ Error: {e}")
                 self._history.append(f"[error: {e}]")
-                # On error, switch to screenshot for a fresh look
+                last_result = f"action failed with: {e}"
                 current_mode = "screenshot"
 
         print(f"\n⚠️  Reached max_steps ({self.max_steps}).")
