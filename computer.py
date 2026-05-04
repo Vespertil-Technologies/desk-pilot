@@ -179,17 +179,31 @@ class BrowserSession:
     def navigate(self, url: str) -> None:
         self.page.goto(url, wait_until="domcontentloaded")
 
+    @staticmethod
+    def _retry_once(fn) -> None:
+        try:
+            fn()
+        except Exception:
+            time.sleep(0.5)
+            fn()
+
     def click_selector(self, selector: str) -> None:
-        """Click an element by CSS selector."""
-        self.page.click(selector)
-        time.sleep(0.3)   # brief settle
+        """Click an element by CSS selector. Retries once on failure."""
+        self._retry_once(lambda: self.page.click(selector, timeout=10_000))
+        time.sleep(0.3)
 
     def double_click_selector(self, selector: str) -> None:
-        self.page.dblclick(selector)
+        self._retry_once(lambda: self.page.dblclick(selector, timeout=10_000))
+        time.sleep(0.3)
+
+    def right_click_selector(self, selector: str) -> None:
+        self._retry_once(
+            lambda: self.page.click(selector, button="right", timeout=10_000)
+        )
         time.sleep(0.3)
 
     def type_into(self, selector: str, text: str) -> None:
-        self.page.fill(selector, text)
+        self._retry_once(lambda: self.page.fill(selector, text, timeout=10_000))
 
     def screenshot_b64(self) -> str:
         """Take a Playwright screenshot (no grid) and return as base64."""
