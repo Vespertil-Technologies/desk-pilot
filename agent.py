@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+from pathlib import Path
 
 from google import genai
 from google.genai import types
@@ -319,13 +320,57 @@ class Agent:
         goal: str,
         model: BaseModel,
         max_steps: int = 20,
+        trace_dir: Path | None = None,
     ) -> None:
         self.browser = browser
         self.goal = goal
         self.max_steps = max_steps
         self.model = model
+        self.trace_dir = trace_dir
         self._history: list[str] = []
         self._cells: dict[str, GridCell] = {}
+
+    def _prepare_trace(self) -> None:
+        if not self.trace_dir:
+            return
+        (self.trace_dir / "html").mkdir(parents=True, exist_ok=True)
+        (self.trace_dir / "screenshots").mkdir(parents=True, exist_ok=True)
+        (self.trace_dir / "trace.jsonl").write_text("", encoding="utf-8")
+        (self.trace_dir / "meta.json").write_text(
+            json.dumps({"goal": self.goal, "max_steps": self.max_steps}, indent=2),
+            encoding="utf-8",
+        )
+
+    def _save_payload(self, step: int, mode: str, payload: str) -> None:
+        if not self.trace_dir:
+            return
+        if mode == "html":
+            (self.trace_dir / "html" / f"step_{step:03d}.html").write_text(
+                payload, encoding="utf-8"
+            )
+        else:
+            (self.trace_dir / "screenshots" / f"step_{step:03d}.png").write_bytes(
+                base64.b64decode(payload)
+            )
+
+    def _save_record(
+        self,
+        step: int,
+        mode: str,
+        action: dict | None,
+        last_result: str,
+    ) -> None:
+        if not self.trace_dir:
+            return
+        record = {
+            "step": step,
+            "mode": mode,
+            "action": action,
+            "last_result": last_result,
+            "history_tail": self._history[-6:],
+        }
+        with (self.trace_dir / "trace.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, default=str) + "\n")
 
     def _history_summary(self) -> str:
         if not self._history:
@@ -419,14 +464,19 @@ class Agent:
         return f"[unknown action: {act}]"
 
     def run(self, start_mode: str = "html") -> None:
+        self._prepare_trace()
+
         current_mode = start_mode
         last_result = "first turn — no prior action"
         prev_html_signal: str | None = None
 
         logger.info("Agent starting. Goal: %s", self.goal)
+        if self.trace_dir:
+            logger.info("Trace: %s", self.trace_dir)
         logger.info("%s", "─" * 60)
 
         for step in range(1, self.max_steps + 1):
+            turn_mode = current_mode
             logger.info("Step %d/%d — mode: %s", step, self.max_steps, current_mode)
 
             if current_mode == "html":
@@ -442,12 +492,14 @@ class Agent:
                 messages = _build_html_message(
                     html, self.goal, self._history_summary(), last_result
                 )
+                self._save_payload(step, "html", html)
             else:
                 b64, self._cells = screenshot_grid()
                 prev_html_signal = None
                 messages = _build_screenshot_message(
                     b64, self.goal, self._history_summary(), last_result
                 )
+                self._save_payload(step, "screenshot", b64)
 
             try:
                 action = self._ask(messages)
@@ -455,6 +507,7 @@ class Agent:
                 logger.error("Model error: %s", e)
                 self._history.append(f"[model-error: {e}]")
                 last_result = f"the model call failed: {e}"
+                self._save_record(step, turn_mode, None, last_result)
                 continue
 
             logger.info(
@@ -469,14 +522,18 @@ class Agent:
                 current_mode = "screenshot"
                 self._history.append("[switched→screenshot]")
                 last_result = "switched to screenshot mode"
+                self._save_record(step, turn_mode, action, last_result)
                 continue
             if act == "request_html":
                 current_mode = "html"
                 self._history.append("[switched→html]")
                 last_result = "switched to html mode"
+                self._save_record(step, turn_mode, action, last_result)
                 continue
             if act == "done":
                 logger.info("Done after %d steps.", step)
+                last_result = "done"
+                self._save_record(step, turn_mode, action, last_result)
                 return
 
             try:
@@ -489,5 +546,7 @@ class Agent:
                 self._history.append(f"[error: {e}]")
                 last_result = f"action failed with: {e}"
                 current_mode = "screenshot"
+
+            self._save_record(step, turn_mode, action, last_result)
 
         logger.warning("Reached max_steps (%d).", self.max_steps)

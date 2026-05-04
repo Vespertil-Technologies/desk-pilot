@@ -3,9 +3,12 @@ main.py — CLI entry point for the AI mouse control tool.
 """
 
 import argparse
+import datetime
 import logging
 import os
+import shutil
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -13,6 +16,8 @@ from agent import Agent, create_model
 from computer import BrowserSession, screenshot_grid
 
 logger = logging.getLogger(__name__)
+
+DESK_PILOT_DIR = Path.home() / ".desk-pilot"
 
 
 def configure_logging(verbose: bool) -> None:
@@ -23,6 +28,20 @@ def configure_logging(verbose: bool) -> None:
         else "%(message)s"
     )
     logging.basicConfig(level=level, format=fmt, datefmt="%H:%M:%S")
+
+
+def resolve_trace_dir(no_trace: bool, keep_traces: bool) -> Path | None:
+    if no_trace:
+        return None
+    if keep_traces:
+        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
+        d = DESK_PILOT_DIR / "runs" / ts
+    else:
+        d = DESK_PILOT_DIR / "last_run"
+        if d.exists():
+            shutil.rmtree(d)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,6 +96,21 @@ def parse_args() -> argparse.Namespace:
         "--verbose",
         action="store_true",
         help="Verbose logging (DEBUG level with timestamps)",
+    )
+
+    trace_group = p.add_mutually_exclusive_group()
+    trace_group.add_argument(
+        "--keep-traces",
+        action="store_true",
+        help=(
+            "Keep every run's trace under ~/.desk-pilot/runs/<timestamp>/."
+            " Default is to overwrite ~/.desk-pilot/last_run/ each invocation."
+        ),
+    )
+    trace_group.add_argument(
+        "--no-trace",
+        action="store_true",
+        help="Disable trace artifacts entirely.",
     )
 
     return p.parse_args()
@@ -140,11 +174,14 @@ def main() -> None:
             browser.start(headless=args.headless, url=start_url)
 
         # ── Run agent ───────────────────────────────────────────────────────
+        trace_dir = resolve_trace_dir(args.no_trace, args.keep_traces)
+
         agent = Agent(
             browser=browser,
             goal=args.goal,
             model=model,
             max_steps=args.max_steps,
+            trace_dir=trace_dir,
         )
 
         agent.run(start_mode=args.mode)
