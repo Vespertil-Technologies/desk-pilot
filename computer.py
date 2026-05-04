@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import string
 import sys
 import time
@@ -23,6 +24,8 @@ from typing import Literal
 import pyautogui
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import Browser, Page, sync_playwright
+
+logger = logging.getLogger(__name__)
 
 if sys.platform == "win32":
     import ctypes
@@ -127,6 +130,31 @@ def screenshot_grid(
 
 # ── HTML capture ─────────────────────────────────────────────────────────────
 
+
+def _looks_like_missing_browser(e: Exception) -> bool:
+    msg = str(e).lower()
+    return "executable doesn't exist" in msg or "playwright install" in msg
+
+
+def _install_chromium() -> None:
+    import subprocess
+
+    logger.info(
+        "Chromium isn't installed yet — running 'playwright install chromium'"
+        " (~150MB, one-time)."
+    )
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "Could not install Chromium automatically. Please run"
+            " 'playwright install chromium' manually and try again."
+        ) from exc
+
+
 class BrowserSession:
     """Thin wrapper around a Playwright browser session."""
 
@@ -137,10 +165,17 @@ class BrowserSession:
 
     def start(self, headless: bool = False, url: str | None = None) -> None:
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(
-            headless=headless,
-            args=["--start-maximized"]
-        )
+        try:
+            self._browser = self._pw.chromium.launch(
+                headless=headless, args=["--start-maximized"]
+            )
+        except Exception as e:
+            if not _looks_like_missing_browser(e):
+                raise
+            _install_chromium()
+            self._browser = self._pw.chromium.launch(
+                headless=headless, args=["--start-maximized"]
+            )
         self._page = self._browser.new_page(no_viewport=True)
         if url:
             self._page.goto(url, wait_until="domcontentloaded")
@@ -178,6 +213,19 @@ class BrowserSession:
 
     def navigate(self, url: str) -> None:
         self.page.goto(url, wait_until="domcontentloaded")
+
+    def window_bounds(self) -> tuple[int, int, int, int] | None:
+        """Browser window screen rect as (left, top, width, height), or None if unavailable."""
+        if self._page is None:
+            return None
+        try:
+            result = self.page.evaluate(
+                "() => [window.screenX, window.screenY,"
+                " window.outerWidth, window.outerHeight]"
+            )
+            return (int(result[0]), int(result[1]), int(result[2]), int(result[3]))
+        except Exception:
+            return None
 
     @staticmethod
     def _retry_once(fn) -> None:

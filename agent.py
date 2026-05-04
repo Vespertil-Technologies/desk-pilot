@@ -24,11 +24,15 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
+from pathlib import Path
 
 from google import genai
 from google.genai import types
 
 from computer import BrowserSession, GridCell, click_cell, screenshot_grid, scroll, type_text
+
+logger = logging.getLogger(__name__)
 
 ACTION_SCHEMA: dict = {
     "type": "object",
@@ -316,13 +320,57 @@ class Agent:
         goal: str,
         model: BaseModel,
         max_steps: int = 20,
+        trace_dir: Path | None = None,
     ) -> None:
         self.browser = browser
         self.goal = goal
         self.max_steps = max_steps
         self.model = model
+        self.trace_dir = trace_dir
         self._history: list[str] = []
         self._cells: dict[str, GridCell] = {}
+
+    def _prepare_trace(self) -> None:
+        if not self.trace_dir:
+            return
+        (self.trace_dir / "html").mkdir(parents=True, exist_ok=True)
+        (self.trace_dir / "screenshots").mkdir(parents=True, exist_ok=True)
+        (self.trace_dir / "trace.jsonl").write_text("", encoding="utf-8")
+        (self.trace_dir / "meta.json").write_text(
+            json.dumps({"goal": self.goal, "max_steps": self.max_steps}, indent=2),
+            encoding="utf-8",
+        )
+
+    def _save_payload(self, step: int, mode: str, payload: str) -> None:
+        if not self.trace_dir:
+            return
+        if mode == "html":
+            (self.trace_dir / "html" / f"step_{step:03d}.html").write_text(
+                payload, encoding="utf-8"
+            )
+        else:
+            (self.trace_dir / "screenshots" / f"step_{step:03d}.png").write_bytes(
+                base64.b64decode(payload)
+            )
+
+    def _save_record(
+        self,
+        step: int,
+        mode: str,
+        action: dict | None,
+        last_result: str,
+    ) -> None:
+        if not self.trace_dir:
+            return
+        record = {
+            "step": step,
+            "mode": mode,
+            "action": action,
+            "last_result": last_result,
+            "history_tail": self._history[-6:],
+        }
+        with (self.trace_dir / "trace.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, default=str) + "\n")
 
     def _history_summary(self) -> str:
         if not self._history:
@@ -333,6 +381,21 @@ class Agent:
         return self.browser.page.evaluate(
             "() => document.URL + '|' + (document.body ? document.body.textContent.length : 0)"
         )
+
+    def _check_screenshot_cell_in_window(self, cell_name: str) -> None:
+        """Refuse to click a cell that falls outside the browser window."""
+        bounds = self.browser.window_bounds()
+        if not bounds:
+            return
+        cell = self._cells.get(cell_name.upper())
+        if cell is None:
+            return
+        bx, by, bw, bh = bounds
+        if not (bx <= cell.x <= bx + bw and by <= cell.y <= by + bh):
+            raise ValueError(
+                f"Cell {cell_name} is outside the browser window — "
+                "pick a cell that lies on the page."
+            )
 
     def _ask(self, messages: list[dict]) -> dict:
         return self.model.generate(messages, SYSTEM_PROMPT)
@@ -347,6 +410,7 @@ class Agent:
                 self.browser.click_selector(sel)
                 return f"click({sel})"
             cell = action["cell"]
+            self._check_screenshot_cell_in_window(cell)
             click_cell(cell, self._cells, "click")
             return f"click(cell={cell})"
 
@@ -356,6 +420,7 @@ class Agent:
                 self.browser.double_click_selector(sel)
                 return f"dblclick({sel})"
             cell = action["cell"]
+            self._check_screenshot_cell_in_window(cell)
             click_cell(cell, self._cells, "double_click")
             return f"dblclick(cell={cell})"
 
@@ -365,6 +430,7 @@ class Agent:
                 self.browser.right_click_selector(sel)
                 return f"rightclick({sel})"
             cell = action["cell"]
+            self._check_screenshot_cell_in_window(cell)
             click_cell(cell, self._cells, "right_click")
             return f"rightclick(cell={cell})"
 
@@ -398,14 +464,20 @@ class Agent:
         return f"[unknown action: {act}]"
 
     def run(self, start_mode: str = "html") -> None:
+        self._prepare_trace()
+
         current_mode = start_mode
         last_result = "first turn — no prior action"
         prev_html_signal: str | None = None
 
-        print(f"\n🤖 Agent starting. Goal: {self.goal}\n{'─' * 60}")
+        logger.info("Agent starting. Goal: %s", self.goal)
+        if self.trace_dir:
+            logger.info("Trace: %s", self.trace_dir)
+        logger.info("%s", "─" * 60)
 
         for step in range(1, self.max_steps + 1):
-            print(f"\nStep {step}/{self.max_steps} — mode: {current_mode}")
+            turn_mode = current_mode
+            logger.info("Step %d/%d — mode: %s", step, self.max_steps, current_mode)
 
             if current_mode == "html":
                 html = self.browser.get_html()
@@ -420,22 +492,29 @@ class Agent:
                 messages = _build_html_message(
                     html, self.goal, self._history_summary(), last_result
                 )
+                self._save_payload(step, "html", html)
             else:
                 b64, self._cells = screenshot_grid()
                 prev_html_signal = None
                 messages = _build_screenshot_message(
                     b64, self.goal, self._history_summary(), last_result
                 )
+                self._save_payload(step, "screenshot", b64)
 
             try:
                 action = self._ask(messages)
             except Exception as e:
-                print(f"  ✗ Model error: {e}")
+                logger.error("Model error: %s", e)
                 self._history.append(f"[model-error: {e}]")
                 last_result = f"the model call failed: {e}"
+                self._save_record(step, turn_mode, None, last_result)
                 continue
 
-            print(f"  ↳ action={action.get('action')!r}  reason={action.get('reasoning')!r}")
+            logger.info(
+                "  → action=%r  reason=%r",
+                action.get("action"),
+                action.get("reasoning"),
+            )
 
             act = action["action"]
 
@@ -443,25 +522,31 @@ class Agent:
                 current_mode = "screenshot"
                 self._history.append("[switched→screenshot]")
                 last_result = "switched to screenshot mode"
+                self._save_record(step, turn_mode, action, last_result)
                 continue
             if act == "request_html":
                 current_mode = "html"
                 self._history.append("[switched→html]")
                 last_result = "switched to html mode"
+                self._save_record(step, turn_mode, action, last_result)
                 continue
             if act == "done":
-                print(f"\n✅ Done after {step} steps.")
+                logger.info("Done after %d steps.", step)
+                last_result = "done"
+                self._save_record(step, turn_mode, action, last_result)
                 return
 
             try:
                 desc = self._execute(action)
                 self._history.append(desc)
-                print(f"  ✓ {desc}")
+                logger.info("  ✓ %s", desc)
                 last_result = f"executed {desc}"
             except Exception as e:
-                print(f"  ✗ Error: {e}")
+                logger.warning("Action failed: %s", e)
                 self._history.append(f"[error: {e}]")
                 last_result = f"action failed with: {e}"
                 current_mode = "screenshot"
 
-        print(f"\n⚠️  Reached max_steps ({self.max_steps}).")
+            self._save_record(step, turn_mode, action, last_result)
+
+        logger.warning("Reached max_steps (%d).", self.max_steps)

@@ -5,12 +5,14 @@ AI agent for controlling a browser and basic desktop interactions using LLMs (Ge
 
 ## SETUP
 
-Install dependencies:
+Install:
 
 ```bash
 pip install -e .
-playwright install
 ```
+
+The first run will download Chromium automatically (~150MB, one-time).
+Run `playwright install chromium` ahead of time if you'd rather not wait.
 
 Put your keys in a .env file
 ```
