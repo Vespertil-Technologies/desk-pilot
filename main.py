@@ -3,12 +3,13 @@ main.py — CLI entry point for the AI mouse control tool.
 """
 
 import argparse
-import sys
 import os
+import sys
 
 from dotenv import load_dotenv
-from computer import BrowserSession, screenshot_grid
+
 from agent import Agent, create_model
+from computer import BrowserSession, screenshot_grid
 
 
 def parse_args() -> argparse.Namespace:

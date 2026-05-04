@@ -22,18 +22,13 @@ Action schema (JSON, returned by the model):
 """
 
 from __future__ import annotations
-import json
-import re
-from typing import Any
+
 import base64
-import anthropic
+
 from google import genai
 from google.genai import types
 
-from computer import BrowserSession, GridCell, screenshot_grid, click_cell, click_at, \
-    double_click_at, right_click_at, type_text, press_key, scroll
-
-MODEL = "claude-opus-4-5"
+from computer import BrowserSession, GridCell, click_cell, screenshot_grid, scroll, type_text
 
 SYSTEM_PROMPT = """You are a computer-use agent that controls a real browser and desktop.
 
@@ -64,7 +59,8 @@ You must reply with a SINGLE JSON object — no markdown fences, nothing else �
 
 Guidelines:
 - Prefer html mode: it is cheaper and more precise.
-- Switch to screenshot mode if the page uses canvas, custom widgets, or you can not find the element by selector.
+- Switch to screenshot mode if the page uses canvas, custom widgets,
+  or you can not find the element by selector.
 - Always prefer the most specific CSS selector (id > aria-label > data-* attributes > class).
 - If the action succeeded but there is more to do, continue with the next action.
 - Set action=done only when the full goal is achieved.
@@ -72,7 +68,8 @@ Guidelines:
 
 
 def _extract_json(raw: str) -> dict:
-    import re, json
+    import json
+    import re
 
     raw = raw.strip()
 
@@ -126,7 +123,7 @@ class BaseModel:
 
 
 class ClaudeModel(BaseModel):
-    def __init__(self, api_key: str, model: str = "claude-opus-4-5"):
+    def __init__(self, api_key: str, model: str = "claude-opus-4-7"):
         import anthropic
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model = model
@@ -199,13 +196,19 @@ def create_model(provider: str, api_key: str) -> BaseModel:
     else:
         raise ValueError(provider)
 class Agent:
-    def __init__(self, browser: BrowserSession, goal: str,model: BaseModel, max_steps: int = 20) -> None:
+    def __init__(
+        self,
+        browser: BrowserSession,
+        goal: str,
+        model: BaseModel,
+        max_steps: int = 20,
+    ) -> None:
         self.browser = browser
         self.goal = goal
         self.max_steps = max_steps
-        self.model = model   # inject dependency
-        self._history: list[str] = []   # short action log for context
-        self._cells: dict[str, GridCell] = {}   # updated each screenshot turn
+        self.model = model
+        self._history: list[str] = []
+        self._cells: dict[str, GridCell] = {}
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
@@ -222,7 +225,6 @@ class Agent:
         """Execute one action dict. Returns a short description for the history log."""
         act = action["action"]
         mode = action.get("mode", "html")
-        reason = action.get("reasoning", "")
 
         if act == "click":
             if mode == "html":
