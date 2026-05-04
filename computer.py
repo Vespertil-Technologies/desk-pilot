@@ -130,6 +130,31 @@ def screenshot_grid(
 
 # ── HTML capture ─────────────────────────────────────────────────────────────
 
+
+def _looks_like_missing_browser(e: Exception) -> bool:
+    msg = str(e).lower()
+    return "executable doesn't exist" in msg or "playwright install" in msg
+
+
+def _install_chromium() -> None:
+    import subprocess
+
+    logger.info(
+        "Chromium isn't installed yet — running 'playwright install chromium'"
+        " (~150MB, one-time)."
+    )
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "Could not install Chromium automatically. Please run"
+            " 'playwright install chromium' manually and try again."
+        ) from exc
+
+
 class BrowserSession:
     """Thin wrapper around a Playwright browser session."""
 
@@ -140,10 +165,17 @@ class BrowserSession:
 
     def start(self, headless: bool = False, url: str | None = None) -> None:
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(
-            headless=headless,
-            args=["--start-maximized"]
-        )
+        try:
+            self._browser = self._pw.chromium.launch(
+                headless=headless, args=["--start-maximized"]
+            )
+        except Exception as e:
+            if not _looks_like_missing_browser(e):
+                raise
+            _install_chromium()
+            self._browser = self._pw.chromium.launch(
+                headless=headless, args=["--start-maximized"]
+            )
         self._page = self._browser.new_page(no_viewport=True)
         if url:
             self._page.goto(url, wait_until="domcontentloaded")
