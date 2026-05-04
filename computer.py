@@ -182,6 +182,19 @@ class BrowserSession:
     def navigate(self, url: str) -> None:
         self.page.goto(url, wait_until="domcontentloaded")
 
+    def window_bounds(self) -> tuple[int, int, int, int] | None:
+        """Browser window screen rect as (left, top, width, height), or None if unavailable."""
+        if self._page is None:
+            return None
+        try:
+            result = self.page.evaluate(
+                "() => [window.screenX, window.screenY,"
+                " window.outerWidth, window.outerHeight]"
+            )
+            return (int(result[0]), int(result[1]), int(result[2]), int(result[3]))
+        except Exception:
+            return None
+
     @staticmethod
     def _retry_once(fn) -> None:
         try:

@@ -337,6 +337,21 @@ class Agent:
             "() => document.URL + '|' + (document.body ? document.body.textContent.length : 0)"
         )
 
+    def _check_screenshot_cell_in_window(self, cell_name: str) -> None:
+        """Refuse to click a cell that falls outside the browser window."""
+        bounds = self.browser.window_bounds()
+        if not bounds:
+            return
+        cell = self._cells.get(cell_name.upper())
+        if cell is None:
+            return
+        bx, by, bw, bh = bounds
+        if not (bx <= cell.x <= bx + bw and by <= cell.y <= by + bh):
+            raise ValueError(
+                f"Cell {cell_name} is outside the browser window — "
+                "pick a cell that lies on the page."
+            )
+
     def _ask(self, messages: list[dict]) -> dict:
         return self.model.generate(messages, SYSTEM_PROMPT)
 
@@ -350,6 +365,7 @@ class Agent:
                 self.browser.click_selector(sel)
                 return f"click({sel})"
             cell = action["cell"]
+            self._check_screenshot_cell_in_window(cell)
             click_cell(cell, self._cells, "click")
             return f"click(cell={cell})"
 
@@ -359,6 +375,7 @@ class Agent:
                 self.browser.double_click_selector(sel)
                 return f"dblclick({sel})"
             cell = action["cell"]
+            self._check_screenshot_cell_in_window(cell)
             click_cell(cell, self._cells, "double_click")
             return f"dblclick(cell={cell})"
 
@@ -368,6 +385,7 @@ class Agent:
                 self.browser.right_click_selector(sel)
                 return f"rightclick({sel})"
             cell = action["cell"]
+            self._check_screenshot_cell_in_window(cell)
             click_cell(cell, self._cells, "right_click")
             return f"rightclick(cell={cell})"
 
