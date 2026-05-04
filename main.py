@@ -3,6 +3,7 @@ main.py — CLI entry point for the AI mouse control tool.
 """
 
 import argparse
+import logging
 import os
 import sys
 
@@ -10,6 +11,18 @@ from dotenv import load_dotenv
 
 from agent import Agent, create_model
 from computer import BrowserSession, screenshot_grid
+
+logger = logging.getLogger(__name__)
+
+
+def configure_logging(verbose: bool) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    fmt = (
+        "%(asctime)s %(levelname)-7s %(name)s — %(message)s"
+        if verbose
+        else "%(message)s"
+    )
+    logging.basicConfig(level=level, format=fmt, datefmt="%H:%M:%S")
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,18 +72,24 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cols", type=int, default=20, help="Grid columns (default 20)")
     p.add_argument("--rows", type=int, default=15, help="Grid rows (default 15)")
 
+    p.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Verbose logging (DEBUG level with timestamps)",
+    )
+
     return p.parse_args()
 
 
 def main() -> None:
-    # ── Load environment variables ──────────────────────────────────────────
     load_dotenv()
 
     args = parse_args()
+    configure_logging(args.verbose)
 
-    # ── Screenshot-only mode ────────────────────────────────────────────────
     if args.screenshot_only:
-        print("Taking grid screenshot...")
+        logger.info("Taking grid screenshot...")
         b64, cells = screenshot_grid(cols=args.cols, rows=args.rows)
 
         import base64
@@ -80,16 +99,17 @@ def main() -> None:
         out = pathlib.Path("grid_screenshot.png")
         out.write_bytes(img_bytes)
 
-        print(f"Saved to {out.resolve()}  ({len(cells)} cells)")
-        print(f"Sample cells: { {k: (v.x, v.y) for k, v in list(cells.items())[:5]} }")
+        logger.info("Saved to %s  (%d cells)", out.resolve(), len(cells))
+        logger.debug(
+            "Sample cells: %s",
+            {k: (v.x, v.y) for k, v in list(cells.items())[:5]},
+        )
         return
 
-    # ── Validate goal ───────────────────────────────────────────────────────
     if not args.goal:
-        print("Error: --goal is required (or use --screenshot-only)")
+        logger.error("--goal is required (or use --screenshot-only)")
         sys.exit(1)
 
-    # ── Model setup ─────────────────────────────────────────────────────────
     provider = os.getenv("MODEL_PROVIDER", "gemini")
 
     if provider == "gemini":
@@ -106,15 +126,16 @@ def main() -> None:
 
     model = create_model(provider, api_key)
 
-    # ── Start browser session ───────────────────────────────────────────────
     browser = BrowserSession()
 
     try:
         if args.attach:
-            print(f"Attaching to Chrome at {args.cdp_url} ...")
+            logger.info("Attaching to Chrome at %s ...", args.cdp_url)
             browser.attach(args.cdp_url)
         else:
-            print(f"Launching browser {'(headless) ' if args.headless else ''}...")
+            logger.info(
+                "Launching browser%s...", " (headless)" if args.headless else ""
+            )
             start_url = args.url or "https://www.google.com"
             browser.start(headless=args.headless, url=start_url)
 

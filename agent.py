@@ -24,11 +24,14 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 
 from google import genai
 from google.genai import types
 
 from computer import BrowserSession, GridCell, click_cell, screenshot_grid, scroll, type_text
+
+logger = logging.getLogger(__name__)
 
 ACTION_SCHEMA: dict = {
     "type": "object",
@@ -402,10 +405,11 @@ class Agent:
         last_result = "first turn — no prior action"
         prev_html_signal: str | None = None
 
-        print(f"\n🤖 Agent starting. Goal: {self.goal}\n{'─' * 60}")
+        logger.info("Agent starting. Goal: %s", self.goal)
+        logger.info("%s", "─" * 60)
 
         for step in range(1, self.max_steps + 1):
-            print(f"\nStep {step}/{self.max_steps} — mode: {current_mode}")
+            logger.info("Step %d/%d — mode: %s", step, self.max_steps, current_mode)
 
             if current_mode == "html":
                 html = self.browser.get_html()
@@ -430,12 +434,16 @@ class Agent:
             try:
                 action = self._ask(messages)
             except Exception as e:
-                print(f"  ✗ Model error: {e}")
+                logger.error("Model error: %s", e)
                 self._history.append(f"[model-error: {e}]")
                 last_result = f"the model call failed: {e}"
                 continue
 
-            print(f"  ↳ action={action.get('action')!r}  reason={action.get('reasoning')!r}")
+            logger.info(
+                "  → action=%r  reason=%r",
+                action.get("action"),
+                action.get("reasoning"),
+            )
 
             act = action["action"]
 
@@ -450,18 +458,18 @@ class Agent:
                 last_result = "switched to html mode"
                 continue
             if act == "done":
-                print(f"\n✅ Done after {step} steps.")
+                logger.info("Done after %d steps.", step)
                 return
 
             try:
                 desc = self._execute(action)
                 self._history.append(desc)
-                print(f"  ✓ {desc}")
+                logger.info("  ✓ %s", desc)
                 last_result = f"executed {desc}"
             except Exception as e:
-                print(f"  ✗ Error: {e}")
+                logger.warning("Action failed: %s", e)
                 self._history.append(f"[error: {e}]")
                 last_result = f"action failed with: {e}"
                 current_mode = "screenshot"
 
-        print(f"\n⚠️  Reached max_steps ({self.max_steps}).")
+        logger.warning("Reached max_steps (%d).", self.max_steps)

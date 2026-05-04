@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import string
 import sys
 import time
@@ -23,6 +24,8 @@ from typing import Literal
 import pyautogui
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import Browser, Page, sync_playwright
+
+logger = logging.getLogger(__name__)
 
 if sys.platform == "win32":
     import ctypes
