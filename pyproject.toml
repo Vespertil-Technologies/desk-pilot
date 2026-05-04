@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "desk-pilot"
+version = "0.1.0"
+description = "AI agent for controlling a browser and basic desktop interactions using LLMs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Vespertil Technologies" }]
+keywords = ["llm", "agent", "browser", "automation", "playwright"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "anthropic>=0.25.0",
+    "playwright>=1.44.0",
+    "pyautogui>=0.9.54",
+    "Pillow>=10.3.0",
+    "python-dotenv>=1.0.0",
+    "google-genai>=0.3.0",
+    "openai>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.5",
+    "pytest>=8",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+desk-pilot = "main:main"
+
+[tool.setuptools]
+py-modules = ["main", "agent", "computer"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

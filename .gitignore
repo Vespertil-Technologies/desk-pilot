@@ -1,13 +1,22 @@
 # Virtual Environment
 venv/
+.venv/
 
 # Python Cache
 __pycache__/
 *.py[cod]
 *$py.class
 
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
 # Environment Variables
 .env
 
 # PNG Files
 *.png
+
+# Local notes
+CLAUDE.md

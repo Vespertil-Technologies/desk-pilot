@@ -1,7 +1,9 @@
-import time
 import ctypes
 import os
+import time
+
 from dotenv import load_dotenv
+
 load_dotenv()
 print("\n=== BASIC ENV CHECK ===")
 
@@ -101,8 +103,9 @@ try:
         print("[✓] Gemini response:", resp.text[:100])
 
     elif provider == "claude":
-        import anthropic
         import os
+
+        import anthropic
 
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
@@ -111,7 +114,7 @@ try:
         client = anthropic.Anthropic(api_key=api_key)
 
         resp = client.messages.create(
-            model="claude-opus-4-5",
+            model="claude-opus-4-7",
             max_tokens=50,
             messages=[{"role": "user", "content": "Return ONLY JSON: {\"msg\":\"hello\"}"}]
         )
@@ -119,8 +122,9 @@ try:
         print("[✓] Claude response:", resp.content[0].text[:100])
 
     elif provider == "openai":
-        from openai import OpenAI
         import os
+
+        from openai import OpenAI
 
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:

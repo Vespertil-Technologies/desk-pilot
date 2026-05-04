@@ -11,19 +11,24 @@ Two action modes:
 """
 
 from __future__ import annotations
+
 import base64
 import io
-import math
 import string
+import sys
 import time
 from dataclasses import dataclass
 from typing import Literal
 
-from PIL import Image, ImageDraw, ImageFont
 import pyautogui
-from playwright.sync_api import sync_playwright, Page, Browser
-import ctypes
-ctypes.windll.user32.SetProcessDPIAware()
+from PIL import Image, ImageDraw, ImageFont
+from playwright.sync_api import Browser, Page, sync_playwright
+
+if sys.platform == "win32":
+    import ctypes
+    ctypes.windll.user32.SetProcessDPIAware()
+
+
 # ── Grid config ──────────────────────────────────────────────────────────────
 
 GRID_COLS = 20          # A-T (letters)
@@ -71,10 +76,18 @@ def screenshot_grid(
     cell_w = W / cols
     cell_h = H / rows
 
-    # Try to load a small monospace font; fall back to default
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", GRID_FONT_SIZE)
-    except Exception:
+    font = None
+    for path in (
+        "consola.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+        "/System/Library/Fonts/Menlo.ttc",
+    ):
+        try:
+            font = ImageFont.truetype(path, GRID_FONT_SIZE)
+            break
+        except OSError:
+            continue
+    if font is None:
         font = ImageFont.load_default()
 
     cells: dict[str, GridCell] = {}
