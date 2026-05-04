@@ -21,7 +21,6 @@ import time
 from dataclasses import dataclass
 from typing import Literal
 
-import pyautogui
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import Browser, Page, sync_playwright
 
@@ -57,6 +56,21 @@ class GridCell:
 
 # ── Screenshot + grid ─────────────────────────────────────────────────────────
 
+
+def compute_grid_cells(width: int, height: int, cols: int, rows: int) -> dict[str, GridCell]:
+    """Map each grid label like 'C4' to the pixel center of its cell."""
+    cell_w = width / cols
+    cell_h = height / rows
+    cells: dict[str, GridCell] = {}
+    for ci, col_letter in enumerate(COLUMNS[:cols]):
+        for ri in range(rows):
+            cx = int(cell_w * ci + cell_w / 2)
+            cy = int(cell_h * ri + cell_h / 2)
+            cell = GridCell(col=col_letter, row=ri + 1, x=cx, y=cy)
+            cells[cell.name] = cell
+    return cells
+
+
 def screenshot_grid(
     region: tuple[int, int, int, int] | None = None,
     cols: int = GRID_COLS,
@@ -69,6 +83,8 @@ def screenshot_grid(
 
     region: (left, top, width, height) or None for full screen
     """
+    import pyautogui
+
     img = pyautogui.screenshot(region=region)
     img = img.convert("RGBA")
     W, H = img.size
@@ -93,31 +109,24 @@ def screenshot_grid(
     if font is None:
         font = ImageFont.load_default()
 
-    cells: dict[str, GridCell] = {}
+    cells = compute_grid_cells(W, H, cols, rows)
 
-    for ci, col_letter in enumerate(COLUMNS[:cols]):
+    for ci in range(cols):
         for ri in range(rows):
-            row_num = ri + 1
-            cx = int(cell_w * ci + cell_w / 2)
-            cy = int(cell_h * ri + cell_h / 2)
-
-            cell = GridCell(col=col_letter, row=row_num, x=cx, y=cy)
-            cells[cell.name] = cell
-
-            # Vertical line at left edge of cell
             if ci > 0:
                 x_line = int(cell_w * ci)
                 draw.line([(x_line, 0), (x_line, H)], fill=GRID_LINE_COLOR, width=1)
-
-            # Horizontal line at top edge of cell
             if ri > 0:
                 y_line = int(cell_h * ri)
                 draw.line([(0, y_line), (W, y_line)], fill=GRID_LINE_COLOR, width=1)
-
-            # Cell label in top-left corner of cell
             label_x = int(cell_w * ci) + 3
             label_y = int(cell_h * ri) + 2
-            draw.text((label_x, label_y), cell.name, font=font, fill=GRID_LABEL_COLOR)
+            draw.text(
+                (label_x, label_y),
+                f"{COLUMNS[ci]}{ri + 1}",
+                font=font,
+                fill=GRID_LABEL_COLOR,
+            )
 
     combined = Image.alpha_composite(img, overlay).convert("RGB")
 
@@ -268,28 +277,42 @@ class BrowserSession:
 # ── Mouse / desktop actions ───────────────────────────────────────────────────
 
 def move_to(x: int, y: int, duration: float = 0.3) -> None:
+    import pyautogui
+
     pyautogui.moveTo(x, y, duration=duration)
 
 def click_at(x: int, y: int) -> None:
+    import pyautogui
+
     pyautogui.click(x, y)
     time.sleep(0.2)
 
 def double_click_at(x: int, y: int) -> None:
+    import pyautogui
+
     pyautogui.doubleClick(x, y)
     time.sleep(0.2)
 
 def right_click_at(x: int, y: int) -> None:
+    import pyautogui
+
     pyautogui.rightClick(x, y)
     time.sleep(0.2)
 
 def type_text(text: str) -> None:
+    import pyautogui
+
     pyautogui.typewrite(text, interval=0.05)
 
 def press_key(key: str) -> None:
+    import pyautogui
+
     pyautogui.press(key)
 
 def scroll(x: int, y: int, clicks: int) -> None:
     """Positive clicks = scroll up, negative = scroll down."""
+    import pyautogui
+
     pyautogui.scroll(clicks, x=x, y=y)
 
 
