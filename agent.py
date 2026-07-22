@@ -483,13 +483,22 @@ class Agent:
 
         if act == "scroll":
             direction = action.get("scroll_dir") or "down"
+            if mode == "html":
+                self.browser.scroll_page(direction)
+                return f"scroll({direction})"
+
             clicks = -3 if direction == "down" else 3
-            if mode == "screenshot" and action.get("cell"):
-                c = self._cells.get(action["cell"].upper())
-                if c:
-                    scroll(c.x, c.y, clicks)
-            else:
-                scroll(0, 0, clicks)
+            cell = self._cells.get((action.get("cell") or "").upper())
+            if cell is not None:
+                scroll(cell.x, cell.y, clicks)
+                return f"scroll({direction}, cell={cell.name})"
+            if not self._cells:
+                raise ValueError("cannot scroll in screenshot mode before a screenshot")
+            # No cell named: scroll over the middle of the capture rather than
+            # the (0, 0) screen corner, which is never over the page.
+            xs = [c.x for c in self._cells.values()]
+            ys = [c.y for c in self._cells.values()]
+            scroll((min(xs) + max(xs)) // 2, (min(ys) + max(ys)) // 2, clicks)
             return f"scroll({direction})"
 
         if act in ("request_screenshot", "request_html", "done"):

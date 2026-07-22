@@ -116,10 +116,10 @@ CI runs both `ruff check` and `pytest` on Linux and Windows.
 
 ## Code structure
 
-- `main.py` — CLI entry point.
-- `agent.py` — model abstraction (Anthropic / Gemini / OpenAI), action schema,
+- `main.py`: CLI entry point.
+- `agent.py`: model abstraction (Anthropic / Gemini / OpenAI), action schema,
   agent loop with action verification.
-- `computer.py` — Playwright browser session and PyAutoGUI desktop helpers.
+- `computer.py`: Playwright browser session and PyAutoGUI desktop helpers.
 
 ## Limitations
 

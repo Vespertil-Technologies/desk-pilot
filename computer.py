@@ -1,5 +1,5 @@
 """
-computer.py — low-level interface to the screen, browser, and mouse.
+computer.py: low-level interface to the screen, browser, and mouse.
 
 Two capture modes:
   1. get_html()        → returns cleaned HTML string (cheap, text-based)
@@ -222,6 +222,16 @@ class BrowserSession:
 
     def navigate(self, url: str) -> None:
         self.page.goto(url, wait_until="domcontentloaded")
+
+    def scroll_page(self, direction: str, amount: int = 400) -> None:
+        """
+        Scroll the page itself, without touching the real mouse.
+
+        HTML mode must never fall through to PyAutoGUI: that moves the physical
+        cursor and scrolls whatever desktop window sits under it.
+        """
+        self.page.mouse.wheel(0, amount if direction == "down" else -amount)
+        time.sleep(0.3)
 
     def window_bounds(self) -> tuple[int, int, int, int] | None:
         """
