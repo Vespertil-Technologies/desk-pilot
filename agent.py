@@ -109,6 +109,8 @@ page. If it did not, rethink and do not repeat the same action.
 """
 
 
+VALID_ACTIONS = frozenset(ACTION_SCHEMA["properties"]["action"]["enum"])
+
 # Fingerprint of the page, compared turn to turn to tell the model whether its
 # last action actually did anything.
 #
@@ -138,6 +140,23 @@ PAGE_SIGNAL_JS = """() => {
         formHash,
     ].join('|');
 }"""
+
+
+def _validate_action(action: object) -> str:
+    """
+    Return the action name, raising if the model handed back something the
+    loop cannot execute.
+
+    The unstructured fallback path parses whatever JSON it can find, so a
+    response with no usable "action" is reachable in normal operation and must
+    not take the whole run down.
+    """
+    if not isinstance(action, dict):
+        raise ValueError(f"expected a JSON object, got {type(action).__name__}")
+    act = action.get("action")
+    if act not in VALID_ACTIONS:
+        raise ValueError(f"missing or unknown action: {act!r}")
+    return str(act)
 
 
 def _extract_json(raw: str) -> dict:
@@ -553,22 +572,22 @@ class Agent:
             # one thing you need when working out from a trace why a run looped.
             sent_to_model = last_result
 
+            action: dict | None = None
             try:
                 action = self._ask(messages)
+                act = _validate_action(action)
             except Exception as e:
                 logger.error("Model error: %s", e)
                 self._history.append(f"[model-error: {e}]")
-                last_result = f"the model call failed: {e}"
-                self._save_record(step, turn_mode, None, last_result, sent_to_model)
+                last_result = f"the last model response was unusable: {e}"
+                self._save_record(step, turn_mode, action, last_result, sent_to_model)
                 continue
 
             logger.info(
                 "  → action=%r  reason=%r",
-                action.get("action"),
+                act,
                 action.get("reasoning"),
             )
-
-            act = action["action"]
 
             if act == "request_screenshot":
                 current_mode = "screenshot"
