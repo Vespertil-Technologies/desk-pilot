@@ -83,7 +83,8 @@ By default, every run writes a trace to `~/.desk-pilot/last_run/`:
 ```
 ~/.desk-pilot/last_run/
 ├── meta.json           # goal, max_steps
-├── trace.jsonl         # one record per turn (mode, action, last_result, history tail)
+├── trace.jsonl         # one record per turn (mode, action, sent_to_model,
+│                       #  last_result, history tail)
 ├── html/step_NNN.html  # HTML payloads sent to the model
 └── screenshots/step_NNN.png   # grid screenshots (screenshot-mode turns)
 ```

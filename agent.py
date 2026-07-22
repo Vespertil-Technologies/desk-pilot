@@ -1,5 +1,5 @@
 """
-agent.py — the AI brain.
+agent.py: the AI brain.
 
 Each turn the agent shows the model one representation of the page
 (HTML or a grid-annotated screenshot) and the model returns a single
@@ -105,8 +105,39 @@ Guidelines:
 - Only return done when the full goal is achieved.
 
 The user message will tell you whether your previous action changed the
-page. If it did not, rethink — do not repeat the same action.
+page. If it did not, rethink and do not repeat the same action.
 """
+
+
+# Fingerprint of the page, compared turn to turn to tell the model whether its
+# last action actually did anything.
+#
+# Text length alone is not enough: none of typing into a field, ticking a
+# checkbox, or flipping display:none changes document.body.textContent, so a
+# run that was working perfectly got told "nothing happened" on every turn.
+# Markup length covers style and attribute edits, and the form controls are
+# folded in separately because .value and .checked never appear in the markup.
+# Control values are hashed rather than kept, so passwords stay out of the
+# trace and out of the next prompt.
+PAGE_SIGNAL_JS = """() => {
+    let formHash = 0;
+    for (const el of document.querySelectorAll('input, textarea, select')) {
+        const s = el.value + '\\u001f' + (el.checked ? 1 : 0);
+        for (let i = 0; i < s.length; i++) {
+            formHash = (formHash * 31 + s.charCodeAt(i)) | 0;
+        }
+    }
+    const active = document.activeElement;
+    return [
+        document.URL,
+        document.title,
+        document.body ? document.body.innerHTML.length : 0,
+        Math.round(window.scrollX),
+        Math.round(window.scrollY),
+        active ? active.tagName + '#' + (active.id || '') : '',
+        formHash,
+    ].join('|');
+}"""
 
 
 def _extract_json(raw: str) -> dict:
@@ -359,6 +390,7 @@ class Agent:
         mode: str,
         action: dict | None,
         last_result: str,
+        sent_to_model: str = "",
     ) -> None:
         if not self.trace_dir:
             return
@@ -366,6 +398,10 @@ class Agent:
             "step": step,
             "mode": mode,
             "action": action,
+            # What the model was told at the top of this turn, and what the
+            # turn ended up producing. Keeping only the latter made it
+            # impossible to see why the model kept retrying an action.
+            "sent_to_model": sent_to_model,
             "last_result": last_result,
             "history_tail": self._history[-6:],
         }
@@ -378,9 +414,7 @@ class Agent:
         return " → ".join(self._history[-6:])
 
     def _html_signal(self) -> str:
-        return self.browser.page.evaluate(
-            "() => document.URL + '|' + (document.body ? document.body.textContent.length : 0)"
-        )
+        return self.browser.page.evaluate(PAGE_SIGNAL_JS)
 
     def _check_screenshot_cell_in_window(self, cell_name: str) -> None:
         """Refuse to click a cell that falls outside the browser window."""
@@ -467,7 +501,7 @@ class Agent:
         self._prepare_trace()
 
         current_mode = start_mode
-        last_result = "first turn — no prior action"
+        last_result = "first turn, no prior action"
         prev_html_signal: str | None = None
 
         logger.info("Agent starting. Goal: %s", self.goal)
@@ -483,11 +517,15 @@ class Agent:
                 html = self.browser.get_html()
                 signal = self._html_signal()
                 if prev_html_signal is not None:
-                    last_result = (
+                    verdict = (
                         "page changed since the last action."
                         if signal != prev_html_signal
-                        else "page did NOT change after the last action — rethink."
+                        else "page did NOT change after the last action, rethink."
                     )
+                    # Appended, not substituted. Overwriting threw away what the
+                    # last turn actually did, including the reason a request was
+                    # refused, which left the model repeating it.
+                    last_result = f"{last_result} | {verdict}"
                 prev_html_signal = signal
                 messages = _build_html_message(
                     html, self.goal, self._history_summary(), last_result
@@ -501,13 +539,18 @@ class Agent:
                 )
                 self._save_payload(step, "screenshot", b64)
 
+            # Captured before the action runs and overwrites last_result. This
+            # is the page-change verdict the model actually saw, which is the
+            # one thing you need when working out from a trace why a run looped.
+            sent_to_model = last_result
+
             try:
                 action = self._ask(messages)
             except Exception as e:
                 logger.error("Model error: %s", e)
                 self._history.append(f"[model-error: {e}]")
                 last_result = f"the model call failed: {e}"
-                self._save_record(step, turn_mode, None, last_result)
+                self._save_record(step, turn_mode, None, last_result, sent_to_model)
                 continue
 
             logger.info(
@@ -522,18 +565,18 @@ class Agent:
                 current_mode = "screenshot"
                 self._history.append("[switched→screenshot]")
                 last_result = "switched to screenshot mode"
-                self._save_record(step, turn_mode, action, last_result)
+                self._save_record(step, turn_mode, action, last_result, sent_to_model)
                 continue
             if act == "request_html":
                 current_mode = "html"
                 self._history.append("[switched→html]")
                 last_result = "switched to html mode"
-                self._save_record(step, turn_mode, action, last_result)
+                self._save_record(step, turn_mode, action, last_result, sent_to_model)
                 continue
             if act == "done":
                 logger.info("Done after %d steps.", step)
                 last_result = "done"
-                self._save_record(step, turn_mode, action, last_result)
+                self._save_record(step, turn_mode, action, last_result, sent_to_model)
                 return
 
             try:
@@ -547,6 +590,6 @@ class Agent:
                 last_result = f"action failed with: {e}"
                 current_mode = "screenshot"
 
-            self._save_record(step, turn_mode, action, last_result)
+            self._save_record(step, turn_mode, action, last_result, sent_to_model)
 
         logger.warning("Reached max_steps (%d).", self.max_steps)
