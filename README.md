@@ -26,7 +26,7 @@ GOOGLE_API_KEY=...
 
 Tested with `gemini-2.5-flash`, `claude-opus-4-7`, and `gpt-4o`.
 
-A standalone environment check is available — `python test.py` exercises
+A standalone environment check is available. `python test.py` exercises
 PyAutoGUI, Playwright, and the configured model end-to-end with no
 dependencies on the agent loop.
 
@@ -114,7 +114,7 @@ pytest
 
 The unit tests run in a couple of seconds and don't need a browser or API key.
 The end-to-end tests use headless Chromium against a small data-URL fixture
-page with a scripted fake model — no live network, no API spend.
+page with a scripted fake model, so no live network and no API spend.
 
 CI runs both `ruff check` and `pytest` on Linux and Windows.
 
