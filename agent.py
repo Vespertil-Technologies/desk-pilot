@@ -393,8 +393,8 @@ class Agent:
         bx, by, bw, bh = bounds
         if not (bx <= cell.x <= bx + bw and by <= cell.y <= by + bh):
             raise ValueError(
-                f"Cell {cell_name} is outside the browser window — "
-                "pick a cell that lies on the page."
+                f"Cell {cell_name} is outside the browser window. "
+                "Pick a cell that lies on the page."
             )
 
     def _ask(self, messages: list[dict]) -> dict:

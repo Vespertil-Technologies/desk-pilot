@@ -224,13 +224,24 @@ class BrowserSession:
         self.page.goto(url, wait_until="domcontentloaded")
 
     def window_bounds(self) -> tuple[int, int, int, int] | None:
-        """Browser window screen rect as (left, top, width, height), or None if unavailable."""
+        """
+        Browser window screen rect as (left, top, width, height) in PHYSICAL
+        pixels, or None if unavailable.
+
+        The browser reports these in CSS pixels, which only equal physical
+        pixels at 100% display scaling and 100% page zoom. The grid overlay is
+        built from a PyAutoGUI screenshot, which is always physical pixels, so
+        scale by devicePixelRatio to put both in the same space. Without this
+        the caller silently rejects cells that are well inside the window: at
+        125% scaling it throws away the right and bottom fifth of the page.
+        """
         if self._page is None:
             return None
         try:
             result = self.page.evaluate(
-                "() => [window.screenX, window.screenY,"
-                " window.outerWidth, window.outerHeight]"
+                "() => { const r = window.devicePixelRatio || 1;"
+                " return [window.screenX * r, window.screenY * r,"
+                " window.outerWidth * r, window.outerHeight * r]; }"
             )
             return (int(result[0]), int(result[1]), int(result[2]), int(result[3]))
         except Exception:

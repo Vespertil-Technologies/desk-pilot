@@ -72,7 +72,9 @@ desk-pilot --mode screenshot --goal "Open Chrome and type google.com"
 ```
 
 In screenshot mode, clicks are clamped to the browser window's on-screen rect
-so the agent can't accidentally hit the taskbar or window controls.
+so the agent can't accidentally hit the taskbar or window controls. The rect is
+converted to physical pixels first, so the clamp stays correct on scaled
+displays and under page zoom.
 
 ## Traces
 
@@ -92,7 +94,7 @@ keeps history. `--no-trace` disables tracing entirely.
 
 ## Notes
 
-- The browser launches maximized — required for correct click alignment.
+- The browser launches maximized, which is required for correct click alignment.
 - In screenshot mode, don't use the mouse or keyboard while the agent runs:
   PyAutoGUI moves the real cursor.
 - HTML mode is preferred for web tasks. Screenshot mode is for canvas, custom
