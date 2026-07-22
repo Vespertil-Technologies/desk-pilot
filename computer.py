@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from PIL import Image, ImageDraw, ImageFont
-from playwright.sync_api import Browser, Page, sync_playwright
+from playwright.sync_api import Browser, Page, Playwright, sync_playwright
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,8 @@ def screenshot_grid(
     cell_w = W / cols
     cell_h = H / rows
 
-    font = None
+    # load_default() returns a bitmap ImageFont, truetype() a FreeTypeFont.
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont | None = None
     for path in (
         "consola.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
@@ -149,7 +150,7 @@ def _install_chromium() -> None:
     import subprocess
 
     logger.info(
-        "Chromium isn't installed yet — running 'playwright install chromium'"
+        "Chromium isn't installed yet, running 'playwright install chromium'"
         " (~150MB, one-time)."
     )
     try:
@@ -168,23 +169,23 @@ class BrowserSession:
     """Thin wrapper around a Playwright browser session."""
 
     def __init__(self) -> None:
-        self._pw = None
+        self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._page: Page | None = None
         self._headless = False
 
     def start(self, headless: bool = False, url: str | None = None) -> None:
         self._headless = headless
-        self._pw = sync_playwright().start()
+        pw = self._pw = sync_playwright().start()
         try:
-            self._browser = self._pw.chromium.launch(
+            self._browser = pw.chromium.launch(
                 headless=headless, args=["--start-maximized"]
             )
         except Exception as e:
             if not _looks_like_missing_browser(e):
                 raise
             _install_chromium()
-            self._browser = self._pw.chromium.launch(
+            self._browser = pw.chromium.launch(
                 headless=headless, args=["--start-maximized"]
             )
         self._page = self._browser.new_page(no_viewport=True)
@@ -194,8 +195,8 @@ class BrowserSession:
     def attach(self, cdp_url: str = "http://localhost:9222") -> None:
         """Attach to an already-running Chrome with --remote-debugging-port=9222."""
         self._headless = False
-        self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.connect_over_cdp(cdp_url)
+        pw = self._pw = sync_playwright().start()
+        self._browser = pw.chromium.connect_over_cdp(cdp_url)
         ctx = self._browser.contexts[0]
         self._page = ctx.pages[0] if ctx.pages else ctx.new_page()
 
