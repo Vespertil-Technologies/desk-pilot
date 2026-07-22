@@ -76,6 +76,10 @@ so the agent can't accidentally hit the taskbar or window controls. The rect is
 converted to physical pixels first, so the clamp stays correct on scaled
 displays and under page zoom.
 
+Screenshot mode needs a visible window. `--mode screenshot --headless` is
+rejected, and a headless run will refuse to switch into screenshot mode, since
+a headless browser paints nothing and the grid would capture your desktop.
+
 ## Traces
 
 By default, every run writes a trace to `~/.desk-pilot/last_run/`:

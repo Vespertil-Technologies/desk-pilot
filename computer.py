@@ -171,8 +171,10 @@ class BrowserSession:
         self._pw = None
         self._browser: Browser | None = None
         self._page: Page | None = None
+        self._headless = False
 
     def start(self, headless: bool = False, url: str | None = None) -> None:
+        self._headless = headless
         self._pw = sync_playwright().start()
         try:
             self._browser = self._pw.chromium.launch(
@@ -191,6 +193,7 @@ class BrowserSession:
 
     def attach(self, cdp_url: str = "http://localhost:9222") -> None:
         """Attach to an already-running Chrome with --remote-debugging-port=9222."""
+        self._headless = False
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.connect_over_cdp(cdp_url)
         ctx = self._browser.contexts[0]
@@ -201,6 +204,17 @@ class BrowserSession:
         if self._page is None:
             raise RuntimeError("BrowserSession not started. Call .start() or .attach() first.")
         return self._page
+
+    @property
+    def can_use_screen(self) -> bool:
+        """
+        Whether screenshot mode is meaningful for this session.
+
+        A headless browser paints nothing on the display, so a grid screenshot
+        would capture the user's desktop instead of the page, and PyAutoGUI
+        clicks would land on whatever real window happens to be there.
+        """
+        return not self._headless
 
     def get_html(self, max_chars: int = 60_000) -> str:
         """

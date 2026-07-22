@@ -529,6 +529,12 @@ class Agent:
         self._prepare_trace()
 
         current_mode = start_mode
+        if current_mode == "screenshot" and not self.browser.can_use_screen:
+            logger.warning(
+                "Headless session cannot use screenshot mode. Starting in html mode."
+            )
+            current_mode = "html"
+
         last_result = "first turn, no prior action"
         prev_html_signal: str | None = None
 
@@ -539,7 +545,7 @@ class Agent:
 
         for step in range(1, self.max_steps + 1):
             turn_mode = current_mode
-            logger.info("Step %d/%d — mode: %s", step, self.max_steps, current_mode)
+            logger.info("Step %d/%d, mode: %s", step, self.max_steps, current_mode)
 
             if current_mode == "html":
                 html = self.browser.get_html()
@@ -590,6 +596,14 @@ class Agent:
             )
 
             if act == "request_screenshot":
+                if not self.browser.can_use_screen:
+                    last_result = (
+                        "screenshot mode is unavailable in this run because the"
+                        " browser is headless. Stay in html mode."
+                    )
+                    logger.warning("  refused switch to screenshot mode (headless)")
+                    self._save_record(step, turn_mode, action, last_result, sent_to_model)
+                    continue
                 current_mode = "screenshot"
                 self._history.append("[switched→screenshot]")
                 last_result = "switched to screenshot mode"
@@ -616,7 +630,13 @@ class Agent:
                 logger.warning("Action failed: %s", e)
                 self._history.append(f"[error: {e}]")
                 last_result = f"action failed with: {e}"
-                current_mode = "screenshot"
+                # Falling back to screenshot mode only helps when there is a
+                # window on screen to look at. Headless, it would screenshot
+                # the user's desktop and click on it.
+                if self.browser.can_use_screen:
+                    current_mode = "screenshot"
+                else:
+                    last_result += " (staying in html mode, this run is headless)"
 
             self._save_record(step, turn_mode, action, last_result, sent_to_model)
 

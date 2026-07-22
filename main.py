@@ -1,5 +1,5 @@
 """
-main.py — CLI entry point for the AI mouse control tool.
+main.py: CLI entry point for the AI mouse control tool.
 """
 
 import argparse
@@ -23,7 +23,7 @@ DESK_PILOT_DIR = Path.home() / ".desk-pilot"
 def configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     fmt = (
-        "%(asctime)s %(levelname)-7s %(name)s — %(message)s"
+        "%(asctime)s %(levelname)-7s %(name)s | %(message)s"
         if verbose
         else "%(message)s"
     )
@@ -142,6 +142,14 @@ def main() -> None:
 
     if not args.goal:
         logger.error("--goal is required (or use --screenshot-only)")
+        sys.exit(1)
+
+    if args.headless and args.mode == "screenshot":
+        logger.error(
+            "--mode screenshot needs a visible window. A headless browser paints"
+            " nothing, so the grid would capture your desktop and clicks would"
+            " land on it. Drop --headless or use --mode html."
+        )
         sys.exit(1)
 
     provider = os.getenv("MODEL_PROVIDER", "gemini")
