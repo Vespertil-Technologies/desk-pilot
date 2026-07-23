@@ -1,5 +1,5 @@
 """
-computer.py — low-level interface to the screen, browser, and mouse.
+computer.py: low-level interface to the screen, browser, and mouse.
 
 Two capture modes:
   1. get_html()        → returns cleaned HTML string (cheap, text-based)
@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from PIL import Image, ImageDraw, ImageFont
-from playwright.sync_api import Browser, Page, sync_playwright
+from playwright.sync_api import Browser, Page, Playwright, sync_playwright
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,8 @@ def screenshot_grid(
     cell_w = W / cols
     cell_h = H / rows
 
-    font = None
+    # load_default() returns a bitmap ImageFont, truetype() a FreeTypeFont.
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont | None = None
     for path in (
         "consola.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
@@ -149,7 +150,7 @@ def _install_chromium() -> None:
     import subprocess
 
     logger.info(
-        "Chromium isn't installed yet — running 'playwright install chromium'"
+        "Chromium isn't installed yet, running 'playwright install chromium'"
         " (~150MB, one-time)."
     )
     try:
@@ -168,21 +169,23 @@ class BrowserSession:
     """Thin wrapper around a Playwright browser session."""
 
     def __init__(self) -> None:
-        self._pw = None
+        self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._page: Page | None = None
+        self._headless = False
 
     def start(self, headless: bool = False, url: str | None = None) -> None:
-        self._pw = sync_playwright().start()
+        self._headless = headless
+        pw = self._pw = sync_playwright().start()
         try:
-            self._browser = self._pw.chromium.launch(
+            self._browser = pw.chromium.launch(
                 headless=headless, args=["--start-maximized"]
             )
         except Exception as e:
             if not _looks_like_missing_browser(e):
                 raise
             _install_chromium()
-            self._browser = self._pw.chromium.launch(
+            self._browser = pw.chromium.launch(
                 headless=headless, args=["--start-maximized"]
             )
         self._page = self._browser.new_page(no_viewport=True)
@@ -191,8 +194,9 @@ class BrowserSession:
 
     def attach(self, cdp_url: str = "http://localhost:9222") -> None:
         """Attach to an already-running Chrome with --remote-debugging-port=9222."""
-        self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.connect_over_cdp(cdp_url)
+        self._headless = False
+        pw = self._pw = sync_playwright().start()
+        self._browser = pw.chromium.connect_over_cdp(cdp_url)
         ctx = self._browser.contexts[0]
         self._page = ctx.pages[0] if ctx.pages else ctx.new_page()
 
@@ -201,6 +205,17 @@ class BrowserSession:
         if self._page is None:
             raise RuntimeError("BrowserSession not started. Call .start() or .attach() first.")
         return self._page
+
+    @property
+    def can_use_screen(self) -> bool:
+        """
+        Whether screenshot mode is meaningful for this session.
+
+        A headless browser paints nothing on the display, so a grid screenshot
+        would capture the user's desktop instead of the page, and PyAutoGUI
+        clicks would land on whatever real window happens to be there.
+        """
+        return not self._headless
 
     def get_html(self, max_chars: int = 60_000) -> str:
         """
@@ -223,14 +238,35 @@ class BrowserSession:
     def navigate(self, url: str) -> None:
         self.page.goto(url, wait_until="domcontentloaded")
 
+    def scroll_page(self, direction: str, amount: int = 400) -> None:
+        """
+        Scroll the page itself, without touching the real mouse.
+
+        HTML mode must never fall through to PyAutoGUI: that moves the physical
+        cursor and scrolls whatever desktop window sits under it.
+        """
+        self.page.mouse.wheel(0, amount if direction == "down" else -amount)
+        time.sleep(0.3)
+
     def window_bounds(self) -> tuple[int, int, int, int] | None:
-        """Browser window screen rect as (left, top, width, height), or None if unavailable."""
+        """
+        Browser window screen rect as (left, top, width, height) in PHYSICAL
+        pixels, or None if unavailable.
+
+        The browser reports these in CSS pixels, which only equal physical
+        pixels at 100% display scaling and 100% page zoom. The grid overlay is
+        built from a PyAutoGUI screenshot, which is always physical pixels, so
+        scale by devicePixelRatio to put both in the same space. Without this
+        the caller silently rejects cells that are well inside the window: at
+        125% scaling it throws away the right and bottom fifth of the page.
+        """
         if self._page is None:
             return None
         try:
             result = self.page.evaluate(
-                "() => [window.screenX, window.screenY,"
-                " window.outerWidth, window.outerHeight]"
+                "() => { const r = window.devicePixelRatio || 1;"
+                " return [window.screenX * r, window.screenY * r,"
+                " window.outerWidth * r, window.outerHeight * r]; }"
             )
             return (int(result[0]), int(result[1]), int(result[2]), int(result[3]))
         except Exception:

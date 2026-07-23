@@ -26,7 +26,7 @@ GOOGLE_API_KEY=...
 
 Tested with `gemini-2.5-flash`, `claude-opus-4-7`, and `gpt-4o`.
 
-A standalone environment check is available — `python test.py` exercises
+A standalone environment check is available. `python test.py` exercises
 PyAutoGUI, Playwright, and the configured model end-to-end with no
 dependencies on the agent loop.
 
@@ -72,7 +72,13 @@ desk-pilot --mode screenshot --goal "Open Chrome and type google.com"
 ```
 
 In screenshot mode, clicks are clamped to the browser window's on-screen rect
-so the agent can't accidentally hit the taskbar or window controls.
+so the agent can't accidentally hit the taskbar or window controls. The rect is
+converted to physical pixels first, so the clamp stays correct on scaled
+displays and under page zoom.
+
+Screenshot mode needs a visible window. `--mode screenshot --headless` is
+rejected, and a headless run will refuse to switch into screenshot mode, since
+a headless browser paints nothing and the grid would capture your desktop.
 
 ## Traces
 
@@ -81,7 +87,8 @@ By default, every run writes a trace to `~/.desk-pilot/last_run/`:
 ```
 ~/.desk-pilot/last_run/
 ├── meta.json           # goal, max_steps
-├── trace.jsonl         # one record per turn (mode, action, last_result, history tail)
+├── trace.jsonl         # one record per turn (mode, action, sent_to_model,
+│                       #  last_result, history tail)
 ├── html/step_NNN.html  # HTML payloads sent to the model
 └── screenshots/step_NNN.png   # grid screenshots (screenshot-mode turns)
 ```
@@ -92,7 +99,7 @@ keeps history. `--no-trace` disables tracing entirely.
 
 ## Notes
 
-- The browser launches maximized — required for correct click alignment.
+- The browser launches maximized, which is required for correct click alignment.
 - In screenshot mode, don't use the mouse or keyboard while the agent runs:
   PyAutoGUI moves the real cursor.
 - HTML mode is preferred for web tasks. Screenshot mode is for canvas, custom
@@ -107,16 +114,16 @@ pytest
 
 The unit tests run in a couple of seconds and don't need a browser or API key.
 The end-to-end tests use headless Chromium against a small data-URL fixture
-page with a scripted fake model — no live network, no API spend.
+page with a scripted fake model, so no live network and no API spend.
 
 CI runs both `ruff check` and `pytest` on Linux and Windows.
 
 ## Code structure
 
-- `main.py` — CLI entry point.
-- `agent.py` — model abstraction (Anthropic / Gemini / OpenAI), action schema,
+- `main.py`: CLI entry point.
+- `agent.py`: model abstraction (Anthropic / Gemini / OpenAI), action schema,
   agent loop with action verification.
-- `computer.py` — Playwright browser session and PyAutoGUI desktop helpers.
+- `computer.py`: Playwright browser session and PyAutoGUI desktop helpers.
 
 ## Limitations
 
