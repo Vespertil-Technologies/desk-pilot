@@ -327,20 +327,25 @@ class OpenAIModel(BaseModel):
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
 
+    def _structured_format(self) -> dict:
+        """response_format for the structured attempt. Subclasses may override."""
+        return {
+            "type": "json_schema",
+            "json_schema": {"name": "action", "schema": ACTION_SCHEMA, "strict": True},
+        }
+
+    def _prepare_system(self, system: str) -> str:
+        """Hook to adjust the system prompt. Identity by default."""
+        return system
+
     def generate(self, messages, system):
+        system = self._prepare_system(system)
         oai_messages = [{"role": "system", "content": system}] + _to_openai_messages(messages)
         try:
             resp = self.client.chat.completions.create(
                 model=self.model,
                 messages=oai_messages,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "action",
-                        "schema": ACTION_SCHEMA,
-                        "strict": True,
-                    },
-                },
+                response_format=self._structured_format(),
             )
             return json.loads(resp.choices[0].message.content)
         except Exception as structured_err:
@@ -354,18 +359,57 @@ class OpenAIModel(BaseModel):
                 raise structured_err from None
 
 
+def _messages_have_image(messages: list[dict]) -> bool:
+    return any(
+        isinstance(m.get("content"), list)
+        and any(block.get("type") == "image" for block in m["content"])
+        for m in messages
+    )
+
+
 class DeepSeekModel(OpenAIModel):
     """
     DeepSeek over its OpenAI-compatible endpoint.
 
-    It is the OpenAI client pointed at a different host, so all of the
-    OpenAIModel request logic is reused. deepseek-v4-pro is multimodal, so
-    screenshot mode works: the grid image travels as the same image_url block
-    _to_openai_messages already builds for OpenAI.
+    It is the OpenAI client pointed at a different host, so the request loop is
+    reused. Two things differ from OpenAI:
+
+    - DeepSeek does not support json_schema, so the structured attempt uses its
+      json_object mode. That mode needs the word "json" in the prompt and does
+      not enforce a shape, so the system prompt is extended with the exact keys
+      and their allowed values; without the value list the model returns
+      invalid mode values like "interact".
+    - The API rejects image_url content, so screenshot mode is unavailable.
+      Image turns are refused with a clear error instead of the raw 400
+      ("unknown variant image_url") the endpoint returns. HTML mode is
+      unaffected, and the refusal makes no network call.
     """
+
+    _ACTION_INSTRUCTIONS = (
+        "\n\nReturn one JSON object with exactly these keys: "
+        "mode ('html' or 'screenshot'); "
+        "action (one of click, double_click, right_click, type, scroll, "
+        "navigate, request_screenshot, request_html, done); "
+        "selector; cell; text; scroll_dir ('up', 'down', or ''); reasoning. "
+        "Use an empty string for any field that does not apply."
+    )
 
     def __init__(self, api_key: str, model: str = "deepseek-v4-pro"):
         super().__init__(api_key, model=model, base_url="https://api.deepseek.com")
+
+    def _structured_format(self) -> dict:
+        return {"type": "json_object"}
+
+    def _prepare_system(self, system: str) -> str:
+        return system + self._ACTION_INSTRUCTIONS
+
+    def generate(self, messages, system):
+        if _messages_have_image(messages):
+            raise ValueError(
+                "DeepSeek's API does not accept image input, so screenshot mode "
+                "is unavailable for this provider. Stay in html mode."
+            )
+        return super().generate(messages, system)
 
 
 def create_model(provider: str, api_key: str, model: str | None = None) -> BaseModel:

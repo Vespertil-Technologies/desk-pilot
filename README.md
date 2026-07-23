@@ -29,9 +29,9 @@ GOOGLE_API_KEY=...
 Tested with `gemini-2.5-flash`, `claude-opus-4-7`, and `gpt-4o`.
 
 DeepSeek is reached through its OpenAI-compatible endpoint and defaults to
-`deepseek-v4-pro`, which is multimodal, so both HTML and screenshot modes work.
-It has not been exercised here against a live key; confirm on DeepSeek's docs
-that image input is enabled on the API before relying on screenshot mode.
+`deepseek-v4-pro`. HTML mode works. Screenshot mode does not: the API rejects
+image content, so an image turn is refused with a clear error rather than a
+raw 400. Use DeepSeek for HTML-mode tasks.
 
 Every provider's model name can be pinned with `--model` (or the `MODEL_NAME`
 env var), which is useful when a provider renames or retires a model.
