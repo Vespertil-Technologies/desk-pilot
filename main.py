@@ -160,6 +160,8 @@ def main() -> None:
         api_key = os.getenv("ANTHROPIC_API_KEY")
     elif provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY")
+    elif provider == "deepseek":
+        api_key = os.getenv("DEEPSEEK_API_KEY")
     else:
         raise ValueError(f"Unknown MODEL_PROVIDER: {provider}")
 

@@ -319,10 +319,12 @@ class GeminiModel(BaseModel):
 
 
 class OpenAIModel(BaseModel):
-    def __init__(self, api_key: str, model: str = "gpt-4o"):
+    def __init__(self, api_key: str, model: str = "gpt-4o", base_url: str | None = None):
         from openai import OpenAI
 
-        self.client = OpenAI(api_key=api_key)
+        # base_url lets any OpenAI-compatible endpoint reuse this path. None
+        # keeps the SDK default (OpenAI's own servers).
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
 
     def generate(self, messages, system):
@@ -352,6 +354,20 @@ class OpenAIModel(BaseModel):
                 raise structured_err from None
 
 
+class DeepSeekModel(OpenAIModel):
+    """
+    DeepSeek over its OpenAI-compatible endpoint.
+
+    It is the OpenAI client pointed at a different host, so all of the
+    OpenAIModel request logic is reused. deepseek-v4-pro is multimodal, so
+    screenshot mode works: the grid image travels as the same image_url block
+    _to_openai_messages already builds for OpenAI.
+    """
+
+    def __init__(self, api_key: str, model: str = "deepseek-v4-pro"):
+        super().__init__(api_key, model=model, base_url="https://api.deepseek.com")
+
+
 def create_model(provider: str, api_key: str) -> BaseModel:
     if provider == "claude":
         return ClaudeModel(api_key)
@@ -359,6 +375,8 @@ def create_model(provider: str, api_key: str) -> BaseModel:
         return GeminiModel(api_key)
     elif provider == "openai":
         return OpenAIModel(api_key)
+    elif provider == "deepseek":
+        return DeepSeekModel(api_key)
     else:
         raise ValueError(provider)
 

@@ -1,7 +1,7 @@
 # Desk Pilot
 
 AI agent for controlling a browser and basic desktop interactions using LLMs
-(Gemini / Claude / OpenAI).
+(Gemini / Claude / OpenAI / DeepSeek).
 
 ## Setup
 
@@ -22,9 +22,16 @@ GOOGLE_API_KEY=...
 # ANTHROPIC_API_KEY=...
 # MODEL_PROVIDER=openai
 # OPENAI_API_KEY=...
+# MODEL_PROVIDER=deepseek
+# DEEPSEEK_API_KEY=...
 ```
 
 Tested with `gemini-2.5-flash`, `claude-opus-4-7`, and `gpt-4o`.
+
+DeepSeek is reached through its OpenAI-compatible endpoint and defaults to
+`deepseek-v4-pro`, which is multimodal, so both HTML and screenshot modes work.
+It has not been exercised here against a live key; confirm on DeepSeek's docs
+that image input is enabled on the API before relying on screenshot mode.
 
 A standalone environment check is available. `python test.py` exercises
 PyAutoGUI, Playwright, and the configured model end-to-end with no
