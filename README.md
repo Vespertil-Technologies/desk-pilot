@@ -1,7 +1,7 @@
 # Desk Pilot
 
 AI agent for controlling a browser and basic desktop interactions using LLMs
-(Gemini / Claude / OpenAI).
+(Gemini / Claude / OpenAI / DeepSeek).
 
 ## Setup
 
@@ -22,9 +22,19 @@ GOOGLE_API_KEY=...
 # ANTHROPIC_API_KEY=...
 # MODEL_PROVIDER=openai
 # OPENAI_API_KEY=...
+# MODEL_PROVIDER=deepseek
+# DEEPSEEK_API_KEY=...
 ```
 
 Tested with `gemini-2.5-flash`, `claude-opus-4-7`, and `gpt-4o`.
+
+DeepSeek is reached through its OpenAI-compatible endpoint and defaults to
+`deepseek-v4-pro`. HTML mode works. Screenshot mode does not: the API rejects
+image content, so an image turn is refused with a clear error rather than a
+raw 400. Use DeepSeek for HTML-mode tasks.
+
+Every provider's model name can be pinned with `--model` (or the `MODEL_NAME`
+env var), which is useful when a provider renames or retires a model.
 
 A standalone environment check is available. `python test.py` exercises
 PyAutoGUI, Playwright, and the configured model end-to-end with no
@@ -52,6 +62,7 @@ Common flags:
 | `--goal`            | Plain-English description of what to accomplish (required).    |
 | `--mode`            | `html` (default, preferred) or `screenshot`.                   |
 | `--max-steps`       | Step budget before the agent gives up. Default 20.             |
+| `--model`           | Model name, overriding the provider default (or `MODEL_NAME`). |
 | `--headless`        | Run the browser headless (no visible window).                  |
 | `--attach`          | Attach to an existing Chrome started with `--remote-debugging-port=9222`. |
 | `-v`, `--verbose`   | DEBUG-level logging with timestamps.                           |
