@@ -65,6 +65,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     p.add_argument(
+        "--model",
+        default=None,
+        help="Model name, overriding the provider default (or the MODEL_NAME env var)",
+    )
+
+    p.add_argument(
         "--attach",
         action="store_true",
         help="Attach to an existing Chrome (--remote-debugging-port=9222)",
@@ -168,7 +174,8 @@ def main() -> None:
     if not api_key:
         raise ValueError(f"Missing API key for provider: {provider}")
 
-    model = create_model(provider, api_key)
+    model_name = args.model or os.getenv("MODEL_NAME")
+    model = create_model(provider, api_key, model_name)
 
     browser = BrowserSession()
 

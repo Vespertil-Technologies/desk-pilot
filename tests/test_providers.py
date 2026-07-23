@@ -32,3 +32,19 @@ def test_openai_keeps_its_own_host():
 def test_unknown_provider_raises():
     with pytest.raises(ValueError):
         create_model("nope", "test-key")
+
+
+def test_model_override_applies_per_provider():
+    assert create_model("deepseek", "k", "deepseek-v4-flash").model == "deepseek-v4-flash"
+    assert create_model("openai", "k", "gpt-4o-mini").model == "gpt-4o-mini"
+    assert create_model("claude", "k", "claude-opus-4-8").model == "claude-opus-4-8"
+
+
+def test_deepseek_override_still_points_at_deepseek():
+    model = create_model("deepseek", "k", "deepseek-v4-flash")
+    assert "api.deepseek.com" in str(model.client.base_url)
+
+
+def test_none_model_keeps_the_provider_default():
+    assert create_model("deepseek", "k").model == "deepseek-v4-pro"
+    assert create_model("openai", "k").model == "gpt-4o"

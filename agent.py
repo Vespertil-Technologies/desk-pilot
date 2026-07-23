@@ -368,15 +368,17 @@ class DeepSeekModel(OpenAIModel):
         super().__init__(api_key, model=model, base_url="https://api.deepseek.com")
 
 
-def create_model(provider: str, api_key: str) -> BaseModel:
+def create_model(provider: str, api_key: str, model: str | None = None) -> BaseModel:
+    # A supplied model overrides the provider's default; None keeps it. The
+    # ternary avoids passing model=None, which would clobber that default.
     if provider == "claude":
-        return ClaudeModel(api_key)
+        return ClaudeModel(api_key, model) if model else ClaudeModel(api_key)
     elif provider == "gemini":
-        return GeminiModel(api_key)
+        return GeminiModel(api_key, model) if model else GeminiModel(api_key)
     elif provider == "openai":
-        return OpenAIModel(api_key)
+        return OpenAIModel(api_key, model) if model else OpenAIModel(api_key)
     elif provider == "deepseek":
-        return DeepSeekModel(api_key)
+        return DeepSeekModel(api_key, model) if model else DeepSeekModel(api_key)
     else:
         raise ValueError(provider)
 

@@ -33,6 +33,9 @@ DeepSeek is reached through its OpenAI-compatible endpoint and defaults to
 It has not been exercised here against a live key; confirm on DeepSeek's docs
 that image input is enabled on the API before relying on screenshot mode.
 
+Every provider's model name can be pinned with `--model` (or the `MODEL_NAME`
+env var), which is useful when a provider renames or retires a model.
+
 A standalone environment check is available. `python test.py` exercises
 PyAutoGUI, Playwright, and the configured model end-to-end with no
 dependencies on the agent loop.
@@ -59,6 +62,7 @@ Common flags:
 | `--goal`            | Plain-English description of what to accomplish (required).    |
 | `--mode`            | `html` (default, preferred) or `screenshot`.                   |
 | `--max-steps`       | Step budget before the agent gives up. Default 20.             |
+| `--model`           | Model name, overriding the provider default (or `MODEL_NAME`). |
 | `--headless`        | Run the browser headless (no visible window).                  |
 | `--attach`          | Attach to an existing Chrome started with `--remote-debugging-port=9222`. |
 | `-v`, `--verbose`   | DEBUG-level logging with timestamps.                           |
